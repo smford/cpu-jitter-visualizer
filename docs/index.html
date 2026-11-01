@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hardware Micro-Jitter & Thermal Throttle Visualizer</title>
+  
+  <!-- COOP/COEP Service Worker for GitHub Pages Cross-Origin Isolation -->
+  <script src="./coi-serviceworker.min.js"></script>
+  
+  <base href="./">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Header & System Isolation Badges -->
+    <header class="app-header">
+      <div class="brand-wrapper">
+        <span class="brand-icon">⚡</span>
+        <div>
+          <h1 class="brand-title">Hardware Micro-Jitter & Thermal Throttle Visualizer</h1>
+          <p class="brand-subtitle">Low-level OS kernel thread preemption, micro-architectural jitter & CPU thermal throttle profiling in Web Workers</p>
+        </div>
+      </div>
+      <div class="header-badges" id="isolation-badge-container">
+        <!-- Injected dynamically by app.js based on window.crossOriginIsolated -->
+        <span class="badge badge-info">Detecting Isolation...</span>
+      </div>
+    </header>
+
+    <!-- Interactive Control Toolbar -->
+    <section class="toolbar-card">
+      <!-- Action Buttons -->
+      <div class="toolbar-group">
+        <button id="btn-start" class="btn btn-primary active">
+          <span>▶</span> Start / Resume
+        </button>
+        <button id="btn-pause" class="btn btn-danger">
+          <span>⏸</span> Pause
+        </button>
+        <button id="btn-recalibrate" class="btn">
+          <span>🔄</span> Recalibrate Baseline
+        </button>
+      </div>
+
+      <!-- Workload Profile Segmented Toggle -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Profile:</span>
+        <div class="segmented-control" role="group" aria-label="Workload Profiles">
+          <button class="profile-btn" data-profile="passive" title="5% duty cycle: short calibration bursts with sleep">Passive (5%)</button>
+          <button class="profile-btn" data-profile="balanced" title="50% duty cycle: balanced execution profiler">Balanced (50%)</button>
+          <button class="profile-btn active" data-profile="heavy" title="100% duty cycle: continuous uninterrupted execution">Heavy (100%)</button>
+          <button class="profile-btn" data-profile="turbo" title="Maximum unthrottled load: unrolled arithmetic designed to heat cores and provoke thermal throttling">Turbo Burner 🔥</button>
+        </div>
+      </div>
+
+      <!-- Core Count & View Configuration -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Cores:</span>
+        <select id="core-count-select" class="select-input" aria-label="Core Count">
+          <!-- Populated dynamically (1 to 32) -->
+        </select>
+
+        <span class="toolbar-label">Window:</span>
+        <select id="time-window-select" class="select-input" aria-label="Time Window">
+          <option value="5">5 Seconds</option>
+          <option value="10" selected>10 Seconds</option>
+          <option value="30">30 Seconds</option>
+          <option value="60">60 Seconds</option>
+        </select>
+
+        <span class="toolbar-label">View:</span>
+        <select id="view-mode-select" class="select-input" aria-label="View Mode">
+          <option value="heatmap_waveform" selected>Heatmap + Waveform</option>
+          <option value="spectrogram">Pure Spectrogram</option>
+          <option value="waveform">Oscilloscope Line</option>
+        </select>
+      </div>
+
+      <!-- Audio Sonification & Export Actions -->
+      <div class="toolbar-group">
+        <button id="btn-audio" class="btn" title="Synthesizes audible clicks for OS context switch preemption spikes">
+          <span class="icon">🔇</span> Preemption Audio: MUTED
+        </button>
+        <button id="btn-export-json" class="btn" title="Download benchmark telemetry JSON">
+          <span>💾</span> JSON
+        </button>
+        <button id="btn-export-csv" class="btn" title="Download benchmark telemetry CSV">
+          <span>📊</span> CSV
+        </button>
+        <button id="btn-info-modal" class="btn" title="System Architecture & Diagnostics Guide">
+          <span>ℹ️</span> Guide
+        </button>
+      </div>
+    </section>
+
+    <!-- SRE HUD Telemetry Gauges -->
+    <section class="hud-grid">
+      <div class="hud-card p50">
+        <span class="hud-title">P50 Jitter (Median)</span>
+        <div class="hud-value" id="val-p50">0 µs</div>
+        <span class="hud-subtext">Baseline operating variance</span>
+      </div>
+
+      <div class="hud-card p90">
+        <span class="hud-title">P90 Jitter</span>
+        <div class="hud-value" id="val-p90">0 µs</div>
+        <span class="hud-subtext">90th percentile latency</span>
+      </div>
+
+      <div class="hud-card p99">
+        <span class="hud-title">P99 Latency Jitter</span>
+        <div class="hud-value" id="val-p99">0 µs</div>
+        <span class="hud-subtext">Thread scheduling tail</span>
+      </div>
+
+      <div class="hud-card p999">
+        <span class="hud-title">P99.9 Tail Jitter</span>
+        <div class="hud-value" id="val-p999">0 µs</div>
+        <span class="hud-subtext">Max kernel interruption</span>
+      </div>
+
+      <div class="hud-card sigma">
+        <span class="hud-title">Jitter Sigma (σ)</span>
+        <div class="hud-value" id="val-sigma">±0.0 µs</div>
+        <span class="hud-subtext">Standard deviation</span>
+      </div>
+
+      <div class="hud-card cs">
+        <span class="hud-title">Context Switches</span>
+        <div class="hud-value" id="val-cs-rate">0.0/s</div>
+        <span class="hud-subtext" id="val-cs-total">0 total</span>
+      </div>
+
+      <div class="hud-card throttle" id="card-hud-throttle">
+        <span class="hud-title">Thermal Throttle Index</span>
+        <div class="hud-value" id="val-thermal-index">0.0%</div>
+        <span class="hud-subtext">Clock degradation vs cold base</span>
+      </div>
+
+      <div class="hud-card clock">
+        <span class="hud-title">Effective Clock Rating</span>
+        <div class="hud-value" id="val-effective-clock">100.0%</div>
+        <span class="hud-subtext">Estimated frequency index</span>
+      </div>
+    </section>
+
+    <!-- Multi-Lane Real-Time Waterfall Heatmap Canvas -->
+    <section class="canvas-wrapper">
+      <div class="canvas-toolbar">
+        <div class="canvas-title">
+          <span>⚡ REAL-TIME MULTI-LANE HARDWARE WATERFALL HEATMAP</span>
+          <span class="badge badge-info" id="val-runtime">00:00.0</span>
+          <span class="badge badge-info"><span id="val-sample-count">0</span> samples</span>
+        </div>
+        <div class="canvas-legend">
+          <div class="legend-item">
+            <span class="legend-color" style="background: rgb(6, 20, 45);"></span>
+            <span>&lt;15µs Calm</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color" style="background: rgb(0, 240, 255);"></span>
+            <span>15-60µs Nominal</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color" style="background: rgb(255, 214, 0);"></span>
+            <span>60-300µs Cache Contention</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color" style="background: rgb(255, 0, 85);"></span>
+            <span>&gt;500µs Kernel Context Switch</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-color" style="background: rgb(168, 85, 247);"></span>
+            <span>Thermal Throttle</span>
+          </div>
+        </div>
+      </div>
+      <div class="waterfall-canvas-container">
+        <canvas id="waterfall-canvas"></canvas>
+      </div>
+    </section>
+
+    <!-- Diagnostics Panel: Per-Core Telemetry Grid & Anomaly Feed -->
+    <section class="diagnostic-section">
+      <!-- Left: Per-Core Real-time Gauges -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <span class="panel-title">PER-CORE HARDWARE GAUGES & ISOLATION</span>
+          <span style="font-size: 11px; color: var(--text-dim);">Click lane or button to isolate</span>
+        </div>
+        <div class="cores-grid" id="cores-grid">
+          <!-- Populated dynamically per core -->
+        </div>
+      </div>
+
+      <!-- Right: Real-time Anomaly Event Terminal -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <span class="panel-title">KERNEL ANOMALY & PREEMPTION FEED</span>
+          <div class="filter-bar">
+            <button class="filter-chip active" data-filter="all">All Events</button>
+            <button class="filter-chip" data-filter="context_switch">Context Switches</button>
+            <button class="filter-chip" data-filter="thermal_throttle">Thermal Throttle</button>
+          </div>
+        </div>
+        <div class="anomaly-panel-body">
+          <div class="anomaly-log-container" id="anomaly-log">
+            <!-- Streaming anomaly rows populated dynamically -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Information & Methodology Modal -->
+  <div class="modal-overlay" id="info-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">Hardware Micro-Jitter & Thermal Diagnostics Architecture</span>
+        <button class="modal-close" id="btn-close-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h4>1. Unprivileged Hardware Profiling</h4>
+        <p>
+          Browsers execute inside secure, unprivileged sandboxes with restricted hardware access. However, by executing pinned, deterministic mathematical execution epochs inside dedicated Web Workers and timing them via high-resolution <code>performance.now()</code>, we can expose the physical underlying CPU behavior and OS kernel scheduling interruptions.
+        </p>
+
+        <h4>2. Anomaly Signatures</h4>
+        <ul>
+          <li><strong>OS Kernel Context Switches (&gt;500µs – 5.0ms):</strong> Isolated high-amplitude spikes where the OS preemptive scheduler interrupts the Web Worker thread to service hardware interrupts, OS timers, or higher-priority processes.</li>
+          <li><strong>L3 Cache Contention & Core Migration (60µs – 300µs):</strong> Jitter induced when CPU cores contend for shared L3 cache lines or when the OS scheduler migrates a thread to another CPU core.</li>
+          <li><strong>Thermal Throttling:</strong> Sustained baseline execution degradation across active cores. When high thermal loads cause the CPU to heat up, the thermal governor scales down CPU clock frequencies (P-states), increasing the execution duration for identical instruction batches.</li>
+        </ul>
+
+        <h4>3. Zero-Allocation Shared Memory & Atomics</h4>
+        <p>
+          When Cross-Origin Isolation (COOP/COEP) is active, worker threads stream timing samples directly into a pre-allocated <code>SharedArrayBuffer</code> ring buffer using <code>Atomics.store</code>. This guarantees zero garbage collection interference in the measurement hot loop.
+        </p>
+
+        <h4>4. GitHub Pages & coi-serviceworker</h4>
+        <p>
+          Static hosts like GitHub Pages do not configure custom response headers by default. This application includes <code>coi-serviceworker.min.js</code>, which dynamically injects <code>Cross-Origin-Opener-Policy: same-origin</code> and <code>Cross-Origin-Embedder-Policy: require-corp</code>. If service workers are disabled or before initial reload, the benchmark automatically falls back to Transferable ArrayBuffers with zero interruption.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- App Bootstrap (ES Module) -->
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
